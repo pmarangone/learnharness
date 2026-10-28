@@ -1,6 +1,6 @@
 # Adaptive lessons scratchpad
 
-Status: both code tasks landed; Windows installer pending.
+Status: both code tasks landed; Windows installer built and server smoke-tested.
 
 | Document | Purpose |
 | --- | --- |

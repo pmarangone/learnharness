@@ -11,4 +11,4 @@
 | Add a valid branch | Existing graph remains intact; branch can be taught and resumed | Passed tool, storage, nested return, and local sample map checks |
 | Bad parent, cycle, repeated operation | No partial update or duplicate branch | Passed invalid parent, re-entry, and nested return; parent must already be active, preventing cycles |
 | Original app opens shared session | No newer chat schema rejection | Passed with previous source on a copied chat; installed executable not checked |
-| Windows packaged app | Production build, startup, and installer verified | Pending |
+| Windows packaged app | Production build, startup, and installer verified | Installer produced; packaged server boot and local endpoints passed with isolated data. Installer and GUI not launched. |
