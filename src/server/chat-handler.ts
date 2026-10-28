@@ -1,3 +1,4 @@
+import { lessonContext, lessonSnapshot, safeLessonSnapshot, settleLesson } from "./lesson.ts";
 import type { Usage } from "@earendil-works/pi-ai";
 import {
 	createPracticeAgent,
@@ -254,6 +255,9 @@ export async function handleChatInput(
 	let conversationEngine: PiEngine;
 	try { conversationEngine = piEngineForSpec(conversation, () => callPurpose.background, lifecycle); }
 	catch { return Response.json({ error: conversation.provider === "chatgpt" ? chatGPTStreamError("model catalog") : isSubscriptionProvider(conversation.provider) ? nativeSubscriptionError(conversation.provider, "model catalog") : "The selected model is unavailable." }, { status: 503 }); }
+	let lesson: ReturnType<typeof lessonSnapshot> = { record: null, stale: false };
+	if (record.kind !== "practice" && hasProbeDone(record.messages)) lesson = safeLessonSnapshot(chatId, record);
+
 	const modelIdForCompaction = `${conversationEngine.model.provider}:${conversationEngine.model.id}`;
 	await ensureCompacted(
 		{
@@ -267,15 +271,18 @@ export async function handleChatInput(
 				catalogContextLimits().get(modelIdForCompaction),
 			),
 			systemPromptTokens: Math.ceil(composeInstructions(record.kind === "practice" ? "practice" : "teacher").length / 4),
+			lessonContextTokens: Math.ceil((lessonContext(lesson)?.length ?? 0) / 4),
 		},
 		chatId,
 	);
 	const compactedRecord = stores.chatStore.getChat(chatId);
 	if (!compactedRecord) return Response.json({ error: "Unknown chat" }, { status: 404 });
 	record = compactedRecord;
+	if (record.kind !== "practice" && hasProbeDone(record.messages)) lesson = safeLessonSnapshot(chatId, record);
 	// Recompute Retry eligibility on current truth, still before beginTurn.
 	// A compaction marker or another writer may have landed during awaits.
 	// These omissions affect ONLY the agent context, never the saved record.
+
 	let retryOmissions = new Set<string>();
 	if (input.type === "retry") {
 		try {
@@ -419,6 +426,7 @@ export async function handleChatInput(
 		restoreAutomatic: (automaticIds, retainedIds) => restoreUncommittedAutomatic(chatId, constructed, automaticIds, retainedIds),
 	});
 	const agentOpts: AgentBuildOptions = {
+		lessonContext: lessonContext(lesson),
 		engine,
 		callPurpose,
 		requestCycle,
@@ -469,6 +477,9 @@ export async function handleChatInput(
 					{
 						chatId,
 						chatStore: stores.chatStore,
+						lessonOutline: lesson.record?.outline ?? null,
+						lessonStale: lesson.stale,
+						lessonUnavailable: lesson.unavailable,
 						jobStore: stores.jobStore,
 						spawn: (job, input) => void jobRunner.runJob(job.id, input),
 						// The registry drop's signal (2026-09-20): no live engine
@@ -562,6 +573,12 @@ export async function handleChatInput(
 				// Wave B: append only messages past the temporary agent prefix.
 				// Retry's saved record still includes its earlier failed attempts.
 				const stamped = persistTurn(stores.chatStore, chatId, persistBaseCount, turnMessages, isAborted);
+				if (teaching && record.kind !== "practice" && !isAborted && !lesson.unavailable) {
+					try {
+						const settled = stores.chatStore.getChat(chatId);
+						if (settled) settleLesson(chatId, settled, stamped, lesson);
+					} catch (error) { console.error(`[chat ${chatId}] lesson outline not saved:`, error); }
+				}
 				noteSteersDurable(chatId, stores.chatStore.getChat(chatId)?.messages ?? stamped);
 				// usage log append (idempotent per turn id) — the stats bar
 				// refolds this on the client after the turn settles. The
@@ -643,6 +660,7 @@ export async function handleChatInput(
 								catalogContextLimits().get(kickModelId),
 							),
 							systemPromptTokens: Math.ceil(composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher").length / 4),
+							lessonContextTokens: freshRecord.kind === "practice" ? 0 : Math.ceil((lessonContext(safeLessonSnapshot(chatId, freshRecord))?.length ?? 0) / 4),
 						};
 					}, chatId);
 			},

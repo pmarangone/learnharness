@@ -1,3 +1,4 @@
+import { deleteLesson } from "../store/lesson.ts";
 import { abortExtraction, extractionStatuses } from "../agent/subagents/extraction.ts";
 import { isJobLive } from "../agent/subagents/aborts.ts";
 import { coverageOf } from "../core/coverage.ts";
@@ -127,6 +128,7 @@ export async function deleteChatSession(chatId: string, mode: ChatDeleteMode): P
 	const stats = deleteChatTraces(stores.graphStore, chatId, mode);
 	const jobsRemoved = stores.jobStore.deleteJobsForChat(chatId);
 	if (stores.chatStore.deleteChat(chatId)) {
+		try { deleteLesson(chatId); } catch (error) { console.error(`[chat ${chatId}] failed to remove lesson outline:`, error); }
 		discardChatDeliveries(chatId);
 		clearTurnFailure(chatId);
 	}
