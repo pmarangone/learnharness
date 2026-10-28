@@ -47,6 +47,7 @@ import {
 	type ModelSlotName,
 } from "@/src/core";
 import { PlanBlock, PlanPopup, latestTree } from "@/components/plan-block";
+import { lessonRecordSchema, type LessonRecord } from "@/src/core";
 import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext } from "@/components/session-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
@@ -270,6 +271,21 @@ export function Chat({
 	// the composer, shows the pre-first-chunk shimmer, and drives the 1500ms
 	// record poll that adopts at settle if the stream can't attach.
 	const [turnInFlight, setTurnInFlight] = useState(initiallyInFlight ?? false);
+	const [lessonView, setLessonView] = useState<{ chatId: string; record: LessonRecord | null; stale: boolean; orphaned: boolean } | null>(null);
+	useEffect(() => {
+		if (status === "submitted" || status === "streaming" || turnInFlight) return;
+		const controller = new AbortController();
+		fetch(`/api/chats/${encodeURIComponent(chatId)}/lesson`, { signal: controller.signal })
+			.then(async (response) => response.ok ? response.json() : null)
+			.then((data: unknown) => {
+				if (!data || typeof data !== "object" || !("lesson" in data)) return;
+				const parsed = lessonRecordSchema.safeParse(data.lesson);
+				setLessonView({ chatId, record: parsed.success ? parsed.data : null, stale: "stale" in data && data.stale === true, orphaned: "orphanedBranchIds" in data && Array.isArray(data.orphanedBranchIds) && data.orphanedBranchIds.length > 0 });
+			})
+			.catch(() => {});
+		return () => controller.abort();
+	}, [chatId, status, turnInFlight, messages]);
+
 
 	// Session title: click-to-rename (owner, 2026-09-17). Clicking the header
 	// title opens edit mode with everything selected — typing replaces, arrows
@@ -1770,7 +1786,7 @@ export function Chat({
 						onClose={() => setFigureFocus(null)}
 					/>
 				)}
-				{planOpen && <PlanPopup messages={messages} onClose={() => setPlanOpen(false)} />}
+				{planOpen && <PlanPopup messages={messages} onClose={() => setPlanOpen(false)} lesson={lessonView?.chatId === chatId ? lessonView.record : null} lessonStale={lessonView?.chatId === chatId && lessonView.stale} lessonOrphaned={lessonView?.chatId === chatId && lessonView.orphaned} />}
 				<AbortTurnDialog mode={abortAsk} onClose={() => setAbortAsk(null)} onConfirm={confirmAbort} busy={busy} />
 				</div>
 			</div>

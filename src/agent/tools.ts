@@ -1,5 +1,5 @@
 import { lessonTools } from "./tools/lesson.ts";
-import type { LessonOutline } from "../core/lesson.ts";
+import type { LessonBranch, LessonOutline } from "../core/lesson.ts";
 import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { invalidInputResult, questionResult, serverExecute } from "./tool-execute.ts";
@@ -394,6 +394,8 @@ export function teachQuizToolFor(ctx: Pick<PlanToolContext, "chatId" | "chatStor
 
 export interface TeacherToolContext extends PlanToolContext {
 	lessonOutline?: LessonOutline | null;
+	lessonBranches?: LessonBranch[];
+	lessonActiveBranchId?: string | null;
 	lessonStale?: boolean;
 	lessonUnavailable?: boolean;
 	/** Job-tool wiring (sub-agent dispatch): the job store + the runner's
@@ -463,7 +465,7 @@ export function createTeacherTools(
 			find: findTool,
 			grep: grepTool,
 			...planTools(ctx),
-			...(ctx.lessonUnavailable ? {} : lessonTools(ctx, ctx.lessonOutline ?? null, ctx.lessonStale)),
+			...(ctx.lessonUnavailable ? {} : lessonTools(ctx, ctx.lessonOutline ?? null, ctx.lessonStale, ctx.lessonBranches, ctx.lessonActiveBranchId)),
 			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable }),
 		},
 		withoutMechanics(enabled),

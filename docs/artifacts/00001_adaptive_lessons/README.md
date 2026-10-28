@@ -1,6 +1,6 @@
 # Adaptive lessons scratchpad
 
-Status: task 1 in progress; task 2 waiting.
+Status: both code tasks landed; Windows installer pending.
 
 | Document | Purpose |
 | --- | --- |

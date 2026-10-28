@@ -16,6 +16,7 @@ import { fitGraphView, fitZoomFor, zoomedGraphView, type Viewport } from "@/comp
 import type { PlanBlockData, PlanNodeStatus, PlanTree } from "@/src/core";
 import { derivedNodeStatus, derivePlanStatuses } from "@/src/core";
 import { Hint } from "@/components/ui/hint";
+import { lessonMapStatus, lessonMapView, type LessonMapEdge, type LessonRecord } from "@/src/core";
 
 /**
  * PLAN BLOCKS — the plan lives in the chat (wave 4): persisted
@@ -482,9 +483,10 @@ export function PlanDiagram({
 	naturalSize,
 	monochrome,
 	fill,
+	lessonStepIds,
 }: {
 	nodes: readonly LayoutNode[];
-	edges: ReadonlyArray<{ from: string; to: string }>;
+	edges: ReadonlyArray<LessonMapEdge>;
 	statusOf: (id: string) => PlanNodeStatus;
 	glowId?: string | null;
 	markerId: string;
@@ -508,6 +510,7 @@ export function PlanDiagram({
 	 *  dock band's marginalia mode, where the diagram must fit BOTH the
 	 *  flank's width and the band's height rather than run width-first. */
 	fill?: boolean;
+	lessonStepIds?: ReadonlySet<string>;
 }) {
 	const layout = useMemo(() => blockLayout(nodes, edges), [nodes, edges]);
 	// Pad only the full-extent render — the plan window's override viewBox is
@@ -604,9 +607,10 @@ export function PlanDiagram({
 					<path
 						key={`${e.from}->${e.to}`}
 						d={edgePathD(pts, target)}
-						className={dim ? "fill-none stroke-border" : "fill-none stroke-white"}
+						className={e.kind === "contains" ? "fill-none stroke-muted-foreground" : dim ? "fill-none stroke-border" : "fill-none stroke-white"}
 						strokeWidth={STROKE_W}
-						markerEnd={`url(#${markerId}${dim ? "-dim" : ""})`}
+						strokeDasharray={e.kind === "contains" ? "5 4" : undefined}
+						markerEnd={e.kind === "contains" ? undefined : `url(#${markerId}${dim ? "-dim" : ""})`}
 					/>
 				);
 			})}
@@ -630,7 +634,7 @@ export function PlanDiagram({
 						<rect
 							width={w}
 							height={h}
-							className={monochrome ? MONO_BOX : BOX[status]}
+							className={monochrome ? MONO_BOX : status === "upcoming" && lessonStepIds?.has(n.id) ? "fill-card stroke-muted-foreground" : BOX[status]}
 							strokeWidth={STROKE_W}
 						/>
 						{glow && (
@@ -654,7 +658,7 @@ export function PlanDiagram({
 								x={w / 2}
 								y={y0 + i * LINE_H}
 								textAnchor="middle"
-								className={monochrome ? MONO_TEXT : TEXT[status]}
+								className={monochrome ? MONO_TEXT : status === "upcoming" && lessonStepIds?.has(n.id) ? "fill-foreground text-xs" : TEXT[status]}
 							>
 								{line}
 							</text>
@@ -748,13 +752,14 @@ const POPUP_PAD = GLOW_REACH;
  * territory. Surface 80% + blur (owner decision): the transcript ghosts
  * through while the focus owns the session area.
  */
-export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessage[]; onClose: () => void }) {
+export function PlanPopup({ messages, onClose, lesson = null, lessonStale = false, lessonOrphaned = false }: { messages: readonly PopupMessage[]; onClose: () => void; lesson?: LessonRecord | null; lessonStale?: boolean; lessonOrphaned?: boolean }) {
 	const tree = useMemo(() => latestTree(messages), [messages]);
 	const statuses = useMemo(
 		() => (tree ? derivePlanStatuses(tree, messages as Parameters<typeof derivePlanStatuses>[1]) : null),
 		[tree, messages],
 	);
-	const statusOf = (id: string): PlanNodeStatus => (statuses ? derivedNodeStatus(statuses, id) : "upcoming");
+	const map = useMemo(() => tree ? lessonMapView(tree, lesson) : null, [tree, lesson]);
+	const statusOf = (id: string): PlanNodeStatus => map ? (lessonStale && map.stepIds.has(id) ? "upcoming" : lessonMapStatus(id, map, (nodeId) => statuses ? derivedNodeStatus(statuses, nodeId) : "upcoming")) : "upcoming";
 
 	// Esc closes — claimed at the DOCUMENT level (THE ONE-ESC LAW, owner
 	// keyboard round 2026-10-06): a surfaced layer's Esc is exactly one
@@ -786,7 +791,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 		return () => ro.disconnect();
 	}, []);
 
-	const layout = useMemo(() => (tree ? blockLayout(tree.nodes, tree.edges) : null), [tree]);
+	const layout = useMemo(() => (map ? blockLayout(map.nodes, map.edges) : null), [map]);
 	// The fit box is the PADDED ink box — the diagram renders with POPUP_PAD
 	// (= the glow's reach) so the blurred glow never clips at the frame, and
 	// the fit must account for that padding.
@@ -894,7 +899,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 		>
 			<div className="mb-2 flex items-center gap-2">
 				<span className="text-sm font-medium">The plan</span>
-				<span className="text-xs text-muted-foreground">live — statuses derive from your check outcomes</span>
+				<span className="min-w-0 truncate text-xs text-muted-foreground">Solid arrows: prerequisites · Dashed lines: lesson steps{lessonStale || lessonOrphaned ? " · Some saved topics need review" : ""}</span>
 				<Hint label="Close" binding="escape" side="left">
 <button
 					type="button"
@@ -937,10 +942,11 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 							}}
 						>
 							<PlanDiagram
-								nodes={tree.nodes}
-								edges={tree.edges}
+								nodes={map?.nodes ?? tree.nodes}
+								edges={map?.edges ?? tree.edges}
+								lessonStepIds={map?.stepIds}
 								statusOf={statusOf}
-								glowId={statuses?.current ?? null}
+								glowId={lessonStale ? null : (map?.currentStep ?? statuses?.current ?? null)}
 								markerId={markerId}
 								pad={POPUP_PAD}
 								naturalSize

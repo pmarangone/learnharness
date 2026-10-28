@@ -291,3 +291,203 @@ test("compaction keeps the lesson outline available to the next turn", async () 
 	assert.deepEqual(after.record?.outline, outline);
 	assert.match(lessonContext(after)!, /Which retry policy/);
 });
+
+test("a deeper branch preserves the map and returns to the interrupted step", async () => {
+	const id = setup();
+	let snap = lessonSnapshot(id, chatStore.getChat(id)!);
+	let tools = lessonTools({ chatId: id, chatStore }, null);
+	const first = await execute(tools, "lesson_outline", "root-call", outline);
+	let stamped = [assistant("root-msg", [fauxToolCall("lesson_outline", outline, { id: "root-call" })]), result("root-ack", "lesson_outline", "root-call", first), assistant("root-text", [fauxText("Start with identity.")])];
+	chatStore.saveMessages(id, stamped);
+	settleLesson(id, chatStore.getChat(id)!, stamped, snap);
+	const originalTree = structuredClone(chatStore.getChat(id)!.tree);
+	const branch = { id: "identity-detail", parentBranchId: null, parentStepId: "identity", reason: "Understand logical identity", outline: { ...outline, problem: "What makes identity logical?", currentStepId: "identity" } };
+	snap = lessonSnapshot(id, chatStore.getChat(id)!);
+	tools = lessonTools({ chatId: id, chatStore }, snap.record!.outline, false, snap.record!.branches, snap.record!.activeBranchId);
+	const invalid = await execute(tools, "lesson_expand", "bad-branch", { ...branch, parentStepId: "route" });
+	assert.equal((invalid as { ok: boolean }).ok, false);
+	const expanded = await execute(tools, "lesson_expand", "expand", branch);
+	assert.equal((expanded as { ok: boolean }).ok, true);
+	const retry = await execute(tools, "lesson_expand", "expand-again", branch);
+	assert.equal((retry as { ok: boolean }).ok, true);
+	stamped = [assistant("branch-msg", [fauxToolCall("lesson_expand", branch, { id: "expand" })]), result("branch-ack", "lesson_expand", "expand", expanded), assistant("branch-text", [fauxText("A logical identity is independent of its host.")])];
+	chatStore.saveMessages(id, [...chatStore.getChat(id)!.messages, ...stamped]);
+	settleLesson(id, chatStore.getChat(id)!, stamped, snap);
+	let saved = readLesson(id)!;
+	assert.deepEqual(chatStore.getChat(id)!.tree, originalTree);
+	assert.deepEqual(saved.outline, outline);
+	assert.equal(saved.branches.length, 1);
+	assert.equal(saved.activeBranchId, "identity-detail");
+	assert.match(lessonContext(lessonSnapshot(id, chatStore.getChat(id)!))!, /What makes identity logical/);
+	snap = lessonSnapshot(id, chatStore.getChat(id)!);
+	tools = lessonTools({ chatId: id, chatStore }, saved.outline, false, saved.branches, saved.activeBranchId);
+	const returned = await execute(tools, "lesson_return", "return", {});
+	stamped = [assistant("return-msg", [fauxToolCall("lesson_return", {}, { id: "return" })]), result("return-ack", "lesson_return", "return", returned), assistant("return-text", [fauxText("Back to the identity step.")])];
+	chatStore.saveMessages(id, [...chatStore.getChat(id)!.messages, ...stamped]);
+	settleLesson(id, chatStore.getChat(id)!, stamped, snap);
+	saved = readLesson(id)!;
+	assert.equal(saved.activeBranchId, null);
+	assert.equal(saved.outline.currentStepId, "identity");
+	assert.equal(saved.branches.length, 1);
+	chatStore.saveTree(id, { nodes: [{ id: "other", title: "Other" }], edges: [], version: 2 });
+	assert.equal(lessonSnapshot(id, chatStore.getChat(id)!).stale, true);
+	assert.equal(readLesson(id)!.branches[0]!.reason, branch.reason);
+});
+
+test("nested branches resume in order and unsuccessful expansions do not persist", async () => {
+	const id = setup();
+	let snap = lessonSnapshot(id, chatStore.getChat(id)!);
+	let tools = lessonTools({ chatId: id, chatStore }, null);
+	const rootResult = await execute(tools, "lesson_outline", "r", outline);
+	async function save(name: string, args: Parameters<typeof fauxToolCall>[1], callId: string, output: unknown, visible = true) {
+		const stamped = [assistant(`${callId}-message`, [fauxToolCall(name, args, { id: callId })]), result(`${callId}-ack`, name, callId, output), ...(visible ? [assistant(`${callId}-text`, [fauxText("A lesson step.")])] : [])];
+		chatStore.saveMessages(id, [...chatStore.getChat(id)!.messages, ...stamped]);
+		settleLesson(id, chatStore.getChat(id)!, stamped, snap);
+		snap = lessonSnapshot(id, chatStore.getChat(id)!);
+		const saved = snap.record!;
+		tools = lessonTools({ chatId: id, chatStore }, saved.outline, snap.stale, saved.branches, saved.activeBranchId);
+	}
+	await save("lesson_outline", outline, "r", rootResult);
+	const first = { id: "first", parentBranchId: null, parentStepId: "identity", reason: "First detour", outline: { ...outline, problem: "First question" } };
+	const unshown = await execute(tools, "lesson_expand", "unshown", first);
+	await save("lesson_expand", first, "unshown", unshown, false);
+	assert.equal(readLesson(id)!.branches.length, 0);
+	const firstResult = await execute(tools, "lesson_expand", "first", first);
+	await save("lesson_expand", first, "first", firstResult);
+	const second = { id: "second", parentBranchId: "first", parentStepId: "identity", reason: "Second detour", outline: { ...outline, problem: "Second question" } };
+	const secondResult = await execute(tools, "lesson_expand", "second", second);
+	await save("lesson_expand", second, "second", secondResult);
+	assert.equal(readLesson(id)!.activeBranchId, "second");
+	for (const [callId, expected] of [["return-one", "first"], ["return-two", null]] as const) {
+		const output = await execute(tools, "lesson_return", callId, {});
+		const resumed = output as { resumeOutline: { problem: string; currentStepId: string } };
+		assert.equal(resumed.resumeOutline.problem, expected === "first" ? "First question" : outline.problem);
+		assert.equal(resumed.resumeOutline.currentStepId, "identity");
+		await save("lesson_return", {}, callId, output);
+		assert.equal(readLesson(id)!.activeBranchId, expected);
+	}
+	assert.equal(readLesson(id)!.branches.length, 2);
+	assert.equal(readLesson(id)!.outline.currentStepId, "identity");
+});
+
+test("lesson map adds containment without changing prerequisite edges", async () => {
+	const { lessonMapView } = await import("../src/core/lesson-map.ts");
+	const tree = { version: 1, nodes: [{ id: "request", title: "Requests" }, { id: "later", title: "Later" }], edges: [{ from: "request", to: "later" }] };
+	const lesson = { version: 1 as const, outline, archivedOutlines: [], branches: [{ id: "identity-detail", parentBranchId: null, parentStepId: "identity", reason: "Explore identity", outline: { ...outline, problem: "What is identity?" } }], activeBranchId: "identity-detail", historySignature: "", planSignature: "", needsReview: false };
+	const before = structuredClone(tree);
+	const view = lessonMapView(tree, lesson);
+	assert.deepEqual(tree, before);
+	assert.deepEqual(view.edges[0], { from: "request", to: "later" });
+	assert.ok(view.edges.some((edge) => edge.kind === "contains" && edge.from === ":lesson:root:request:identity" && edge.to === ":lesson:heading:identity-detail"));
+	assert.equal(view.currentStep, ":lesson:branch:identity-detail:identity");
+});
+
+test("moving to another course node preserves the previous outline and branch", async () => {
+	const { lessonMapView } = await import("../src/core/lesson-map.ts");
+	const id = setup();
+	chatStore.saveTree(id, { nodes: [{ id: "request", title: "Request" }, { id: "failure", title: "Failure" }], edges: [{ from: "request", to: "failure" }], version: 1 });
+	let snap = lessonSnapshot(id, chatStore.getChat(id)!);
+	let tools = lessonTools({ chatId: id, chatStore }, null);
+	async function save(name: string, args: Parameters<typeof fauxToolCall>[1], idSuffix: string) {
+		const output = await execute(tools, name, idSuffix, args);
+		assert.equal((output as { ok: boolean }).ok, true);
+		const stamped = [assistant(`${idSuffix}-message`, [fauxToolCall(name, args, { id: idSuffix })]), result(`${idSuffix}-ack`, name, idSuffix, output), assistant(`${idSuffix}-text`, [fauxText("A step is presented.")])];
+		chatStore.saveMessages(id, [...chatStore.getChat(id)!.messages, ...stamped]);
+		settleLesson(id, chatStore.getChat(id)!, stamped, snap);
+		snap = lessonSnapshot(id, chatStore.getChat(id)!);
+		const saved = snap.record!;
+		tools = lessonTools({ chatId: id, chatStore }, saved.outline, snap.stale, saved.branches, saved.activeBranchId);
+	}
+	await save("lesson_outline", outline, "initial");
+	const branch = { id: "detail", parentBranchId: null, parentStepId: "identity", reason: "Understand identity", outline: { ...outline, problem: "How is identity chosen?" } };
+	await save("lesson_expand", branch, "expand-detail");
+	await save("lesson_return", {}, "return-detail");
+	await save("lesson_outline", { ...outline, parentNodeId: "failure", problem: "What happens on failure?" }, "new-topic");
+	assert.equal(snap.stale, false);
+	assert.deepEqual(snap.record!.archivedOutlines, [outline]);
+	assert.equal(snap.record!.branches[0]!.id, "detail");
+	const view = lessonMapView(chatStore.getChat(id)!.tree!, snap.record);
+	assert.ok(view.edges.some((edge) => edge.to === ":lesson:heading:detail"));
+	assert.equal(view.currentStep, ":lesson:root:failure:identity");
+});
+
+test("a removed course parent does not trap the learner in a stale branch", async () => {
+	const id = setup();
+	let snap = lessonSnapshot(id, chatStore.getChat(id)!);
+	let tools = lessonTools({ chatId: id, chatStore }, null);
+	async function save(name: string, args: Parameters<typeof fauxToolCall>[1], callId: string) {
+		const output = await execute(tools, name, callId, args);
+		assert.equal((output as { ok: boolean }).ok, true);
+		const stamped = [assistant(`${callId}-msg`, [fauxToolCall(name, args, { id: callId })]), result(`${callId}-ack`, name, callId, output), assistant(`${callId}-text`, [fauxText("Continue after reviewing the map.")])];
+		chatStore.saveMessages(id, [...chatStore.getChat(id)!.messages, ...stamped]);
+		settleLesson(id, chatStore.getChat(id)!, stamped, snap);
+		snap = lessonSnapshot(id, chatStore.getChat(id)!);
+		const saved = snap.record!;
+		tools = lessonTools({ chatId: id, chatStore }, saved.outline, snap.stale, saved.branches, saved.activeBranchId);
+	}
+	await save("lesson_outline", outline, "before-removal");
+	const branch = { id: "detour", parentBranchId: null, parentStepId: "identity", reason: "Explore identity", outline: { ...outline, problem: "Identity details" } };
+	await save("lesson_expand", branch, "detour-call");
+	chatStore.saveTree(id, { nodes: [{ id: "new-node", title: "New node" }], edges: [], version: 2 });
+	snap = lessonSnapshot(id, chatStore.getChat(id)!);
+	assert.equal(snap.stale, true);
+	tools = lessonTools({ chatId: id, chatStore }, snap.record!.outline, true, snap.record!.branches, snap.record!.activeBranchId);
+	await save("lesson_return", {}, "leave-stale");
+	assert.equal(snap.stale, true);
+	await save("lesson_outline", { ...outline, parentNodeId: "new-node" }, "reconcile");
+	assert.equal(snap.stale, false);
+	assert.equal(snap.record!.branches[0]!.reason, "Explore identity");
+	assert.equal(snap.record!.archivedOutlines[0]!.parentNodeId, "request");
+	assert.deepEqual(snap.orphanedBranchIds, ["detour"]);
+	const { lessonMapView } = await import("../src/core/lesson-map.ts");
+	const visible = lessonMapView(chatStore.getChat(id)!.tree!, snap.record);
+	assert.ok(visible.nodes.some((node) => node.id === ":lesson:removed:request"));
+	assert.ok(visible.nodes.some((node) => node.id === ":lesson:heading:detour"));
+});
+
+test("returning from a stale branch does not silently clear the review flag", async () => {
+	const id = setup();
+	let snap = lessonSnapshot(id, chatStore.getChat(id)!);
+	let tools = lessonTools({ chatId: id, chatStore }, null);
+	async function save(name: string, args: Parameters<typeof fauxToolCall>[1], callId: string) {
+		const output = await execute(tools, name, callId, args);
+		assert.equal((output as { ok: boolean }).ok, true);
+		const stamped = [assistant(`${callId}-msg`, [fauxToolCall(name, args, { id: callId })]), result(`${callId}-ack`, name, callId, output), assistant(`${callId}-text`, [fauxText("Continuing.")])];
+		chatStore.saveMessages(id, [...chatStore.getChat(id)!.messages, ...stamped]);
+		settleLesson(id, chatStore.getChat(id)!, stamped, snap);
+		snap = lessonSnapshot(id, chatStore.getChat(id)!);
+		const saved = snap.record!;
+		tools = lessonTools({ chatId: id, chatStore }, saved.outline, snap.stale, saved.branches, saved.activeBranchId);
+	}
+	await save("lesson_outline", outline, "root-stale");
+	await save("lesson_expand", { id: "detour", parentBranchId: null, parentStepId: "identity", reason: "Explore identity", outline: { ...outline, problem: "Identity details" } }, "branch-stale");
+	chatStore.saveMessages(id, [...chatStore.getChat(id)!.messages, newUserMessage("An older app added a message.")]);
+	snap = lessonSnapshot(id, chatStore.getChat(id)!);
+	assert.equal(snap.stale, true);
+	tools = lessonTools({ chatId: id, chatStore }, snap.record!.outline, true, snap.record!.branches, snap.record!.activeBranchId);
+	await save("lesson_return", {}, "return-stale");
+	assert.equal(snap.stale, true);
+	assert.equal(snap.record!.needsReview, true);
+	await save("lesson_outline", outline, "reviewed-outline");
+	assert.equal(snap.stale, false);
+});
+
+test("re-entering a saved branch returns its last position without duplicating it", async () => {
+	const id = setup();
+	const branch = { id: "detour", parentBranchId: null, parentStepId: "identity", reason: "Explore identity", outline: { ...outline, problem: "Identity details" } };
+	const advanced = { ...branch, outline: { ...branch.outline, currentStepId: "route" } };
+	const tools = lessonTools({ chatId: id, chatStore }, outline, false, [advanced], null);
+	const output = await execute(tools, "lesson_expand", "resume", branch) as { ok: boolean; branch: typeof advanced };
+	assert.equal(output.ok, true);
+	assert.equal(output.branch.outline.currentStepId, "route");
+	const conflict = await execute(tools, "lesson_expand", "conflict", { ...branch, reason: "Different branch" }) as { ok: boolean };
+	assert.equal(conflict.ok, false);
+});
+
+test("a successful lesson outline signals teaching even without a quiz", async () => {
+	const { phaseAt3, phaseAt3Lh } = await import("../src/core/phases.ts");
+	const view = [{ parts: [{ type: "tool-probe_done", state: "output-available", output: { ok: true } }] }, { parts: [{ type: "tool-lesson_outline", state: "output-available", output: { ok: true } }] }];
+	assert.equal(phaseAt3(view), "teach");
+	const native = [assistant("probe-phase", [fauxToolCall("probe_done", {}, { id: "probe-phase-call" })]), result("probe-phase-result", "probe_done", "probe-phase-call", { ok: true }), assistant("outline-phase", [fauxToolCall("lesson_outline", outline, { id: "outline-phase-call" })]), result("outline-phase-result", "lesson_outline", "outline-phase-call", { ok: true })];
+	assert.equal(phaseAt3Lh(native), "teach");
+});

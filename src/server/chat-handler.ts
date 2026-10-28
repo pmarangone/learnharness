@@ -478,6 +478,8 @@ export async function handleChatInput(
 						chatId,
 						chatStore: stores.chatStore,
 						lessonOutline: lesson.record?.outline ?? null,
+						lessonBranches: lesson.record?.branches,
+						lessonActiveBranchId: lesson.record?.activeBranchId,
 						lessonStale: lesson.stale,
 						lessonUnavailable: lesson.unavailable,
 						jobStore: stores.jobStore,

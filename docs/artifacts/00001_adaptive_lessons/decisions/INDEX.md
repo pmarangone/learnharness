@@ -5,3 +5,5 @@
 - D3: Use the learner's latest pacing instructions; a request to pause or explore overrides an older default.
 - D4: Store lesson metadata separately from the original chat record. Preserve a stale outline when the older app changes the conversation or map.
 - D5: Treat model-generated sources and uncertainty as session data, not high-priority instructions. A presented step is a position, not proof of learning.
+- D6: A branch is lesson containment, not a prerequisite. Dotted links and removed-topic placeholders are display-only; the course graph stays unchanged.
+- D7: Keep previous topic outlines and branches, and expose removed parents for review without blocking unrelated current topics. Returning from a stale branch does not clear the review requirement.

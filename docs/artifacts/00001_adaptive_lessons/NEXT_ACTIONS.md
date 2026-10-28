@@ -1,5 +1,5 @@
 # Next actions
 
-1. Trace the teacher, session persistence, pending-question handling, and compaction. Complete task 1 and verify its behavior on copies of existing sessions.
-2. Implement task 2 on the verified task 1 foundation and verify expanding a branch and returning to the previous step.
-3. Tell the learner before building a Windows installer. Build from the finished fork and verify the artifact.
+1. Tell the learner before building a Windows installer.
+2. Build the finished fork with the custom app identity and disabled updater. Verify the artifact and startup using separate test data.
+3. Validate real-model pacing with the learner after installation.

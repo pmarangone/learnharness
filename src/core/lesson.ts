@@ -20,10 +20,25 @@ export const lessonOutlineSchema = z.object({
 	if (JSON.stringify(outline).length > 8000) ctx.addIssue({ code: "custom", message: "The lesson outline must be at most 8,000 characters." });
 });
 export type LessonOutline = z.infer<typeof lessonOutlineSchema>;
+export const lessonBranchSchema = z.object({
+	id: slug,
+	parentBranchId: slug.nullable(),
+	parentStepId: slug,
+	reason: z.string().trim().min(1).max(1000),
+	outline: lessonOutlineSchema,
+});
+export type LessonBranch = z.infer<typeof lessonBranchSchema>;
+export function sameBranchDefinition(a: LessonBranch, b: LessonBranch): boolean {
+	const { currentStepId: _a, ...outlineA } = a.outline;
+	const { currentStepId: _b, ...outlineB } = b.outline;
+	return a.id === b.id && a.parentBranchId === b.parentBranchId && a.parentStepId === b.parentStepId && a.reason === b.reason && JSON.stringify(outlineA) === JSON.stringify(outlineB);
+}
 export const lessonRecordSchema = z.object({
 	version: z.literal(1),
 	outline: lessonOutlineSchema,
 	archivedOutlines: z.array(lessonOutlineSchema).max(100).default([]),
+	branches: z.array(lessonBranchSchema).max(50).default([]),
+	activeBranchId: slug.nullable().default(null),
 	historySignature: z.string(),
 	planSignature: z.string(),
 	needsReview: z.boolean(),

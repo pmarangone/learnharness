@@ -7,19 +7,12 @@
  *   probe  — until the prober's `probe_done` call CONCLUDES (a clean
  *            toolResult for it; the assessment rides the call's arguments)
  *   plan   — probe concluded, until teaching actually BEGINS
- *   teach  — the first quiz tool call tagged with a `nodeId` (a question
- *            ABOUT a plan node — probe quizzes carry no nodeId in their
- *            schema, so nothing false-triggers). The CALL is the seam, not
- *            its answer: the block that poses the first node question is
- *            where teaching starts.
+ *   teach  — the first node-tagged question or successful lesson_outline.
+ *            The outline lets an expository lesson begin without a quiz.
  *
- * There is no verdict gate anymore: presenting the plan ends the teacher's
- * turn, and the learner's next message is a natural reply (a change
- * request, or the go-ahead). The live indicator LAGS by design (owner
- * accepted): "teach" shows only once the first node's question is posed.
- * A teacher that never tags a quiz can no longer exist — nodeId is
- * schema-required at the teach quiz boundary (owner ruling 2026-09-26),
- * so the seam signal is structural, not prompt-mandated.
+ * There is no verdict gate. A plan and first lesson may be presented in
+ * the same response; the learner's latest pacing preference governs whether
+ * to wait. Neither an outline nor a question claims mastery.
  *
  * The former derived-occupancy seam (phase-of-tree via `currentNodeId`)
  * is GONE, as is the verdict-marker fold: no backwards compatibility
@@ -29,7 +22,7 @@
  * VIEW messages (the client's dividers and dock — part shapes, pure and
  * structural); `phaseAt3Lh` folds the NATIVE record (server summaries,
  * tests) — probe→plan advances at the probe_done RESULT message, plan→teach
- * at the assistant message carrying the first nodeId-tagged quiz CALL.
+ * at the first tagged question or successful lesson outline.
  * Both are strictly sequential; the two derivations agree on every settled
  * record (a call's part projects into the same view boundary).
  *
@@ -77,21 +70,19 @@ function advance(
 	if (!parts) return phase;
 	for (const part of parts) {
 		// STRICTLY SEQUENTIAL: probe → plan only via a concluded probe_done,
-		// plan → teach only via the first nodeId-tagged quiz CALL (the call,
-		// not its answer — an errored-and-retried call still proves teaching
-		// began, and the retry lands in the same group anyway).
+		// plan → teach at a node-tagged question or a successful lesson outline.
 		if (
 			phase === "probe" && part.type === "tool-probe_done" && part.state === "output-available" &&
 			(part.output as { ok?: unknown } | null | undefined)?.ok !== false
 		) {
 			phase = "plan";
 		}
-		// plan → teach via the first nodeId-tagged quizzing CALL — quiz OR
-		// explain, whichever mechanic the settings armed (both carry nodeId).
+		// An expository lesson can start without a quizzing call.
 		if (
-			phase === "plan" &&
-			(part.type === "tool-quiz" || part.type === "tool-explain") &&
-			taggedNodeId(part.input)
+			phase === "plan" && (
+				((part.type === "tool-quiz" || part.type === "tool-explain") && taggedNodeId(part.input)) ||
+				(part.type === "tool-lesson_outline" && part.state === "output-available" && (part.output as { ok?: unknown } | null | undefined)?.ok === true)
+			)
 		) {
 			phase = "teach";
 		}
@@ -113,7 +104,7 @@ function advance(
  * between the plan presentation and the teaching block.
  */
 export function teachStepIndex(
-	parts: ReadonlyArray<{ type: string; state?: string; input?: unknown }>,
+	parts: ReadonlyArray<{ type: string; state?: string; input?: unknown; output?: unknown }>,
 ): number {
 	let stepStarts = 0; // how many step-start parts seen so far
 	let latest = -1; // index of the latest step-start
@@ -125,8 +116,8 @@ export function teachStepIndex(
 			continue;
 		}
 		if (
-			(part.type === "tool-quiz" || part.type === "tool-explain") &&
-			taggedNodeId(part.input)
+			((part.type === "tool-quiz" || part.type === "tool-explain") && taggedNodeId(part.input)) ||
+			(part.type === "tool-lesson_outline" && part.state === "output-available" && (part.output as { ok?: unknown } | null | undefined)?.ok === true)
 		) {
 			// The call's governing step: 0–1 step-starts seen = the message's
 			// FIRST step → -1 (the divider belongs before the whole message);
@@ -172,6 +163,7 @@ export function phaseAt3Lh(messages: readonly LhMessage[], upToIndex?: number): 
 		const role = (m as { role?: string }).role;
 		if (role === "toolResult") {
 			if (phase === "probe" && concluded.has(m.id)) phase = "plan";
+			else if (phase === "plan" && m.role === "toolResult" && m.toolName === "lesson_outline" && !m.isError && (m.details as { ok?: unknown } | null | undefined)?.ok === true) phase = "teach";
 		} else if (role === "assistant") {
 			const content = (m as { content?: ReadonlyArray<{ type?: string; name?: string; arguments?: unknown }> }).content ?? [];
 			if (phase === "plan") {
