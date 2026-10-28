@@ -24,7 +24,7 @@ const desktopMarker = process.env.LH_DESKTOP_SERVER, desktopSecret = process.env
 const model = piModels().getModel("openai", "gpt-5") as Model<"openai-responses">;
 let epoch = 1, revision = 1, background = true;
 let cut: "lease" | "payload" | "full" | "afterFetch" | "none" = "none";
-let leases: boolean[] = [], fetches = 0, toolFirst = false;
+let leases: boolean[] = [], fetches = 0, toolFirst = false, emptyFirst = false;
 const status = () => ({ available: true, pending: false, allowBackgroundUse: background, activeId: "scratch", accounts: [{ id: "scratch", registration: "oaiapp_scratch", email: "dummy@example.invalid", connected: true, planEnabled: true, background: !background }], error: null });
 const ipc = (m: unknown) => (process.emit as (name: string, m: unknown) => boolean)("message", m);
 function revoke(full = false) {
@@ -50,6 +50,11 @@ before(() => {
   assert.equal(request.headers.get("user-agent"), APP_IDENTITY.userAgent.custom);
   const body = JSON.parse(await request.text()); assert.equal(body.model, model.id); assert.equal(body.store, false);
   fetches++;
+  if (emptyFirst && fetches === 1) {
+   const item = { id: "msg_empty", type: "message", role: "assistant", content: [{ type: "output_text", text: "", annotations: [] }] };
+   const events = [{ type: "response.created", response: { id: "resp_empty" } }, { type: "response.output_item.added", output_index: 0, item: { ...item, content: [] } }, { type: "response.content_part.added", output_index: 0, content_index: 0, part: { type: "output_text", text: "", annotations: [] } }, { type: "response.output_item.done", output_index: 0, item }, { type: "response.completed", response: { status: "completed", output: [item], usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 } } }];
+   return new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+  }
   if (cut === "afterFetch") { cut = "none"; revoke(); throw new Error("admitted local abort"); }
   if (toolFirst && fetches === 1) {
    const call = { type: "function_call", id: "fc_again", call_id: "call_again", name: "again", namespace: "learnharness", arguments: "{}", status: "completed" };
@@ -69,8 +74,8 @@ after(() => {
  if (originalConnected) Object.defineProperty(process, "connected", originalConnected); else delete (process as { connected?: boolean }).connected;
 });
 const automatic = (id = "auto") => ({ id, role: "custom" as const, customType: "subagent-steer" as const, content: "Automatic result", details: { jobId: "dummy-job" }, display: true, timestamp: 2 });
-async function nativeRun(where: typeof cut, staged: boolean, withLearner = true, commitThrows = false, lateAutomatic = false, withTool = false) {
- epoch++; revision++; background = true; cut = where; leases = []; fetches = 0; toolFirst = withTool;
+async function nativeRun(where: typeof cut, staged: boolean, withLearner = true, commitThrows = false, lateAutomatic = false, withTool = false, retryEmpty = false) {
+ epoch++; revision++; background = true; cut = where; leases = []; fetches = 0; toolFirst = withTool; emptyFirst = retryEmpty;
  await refreshChatGPTModels([model]);
  const seed = newUserMessage("Initial learner"); const marker = automatic(); const learner = { ...newUserMessage("New learner"), id: "learner-late" };
  const messages = staged ? [seed, marker] : [seed];
@@ -85,9 +90,9 @@ async function nativeRun(where: typeof cut, staged: boolean, withLearner = true,
  const raw = piEngineForSpec({ provider: "chatgpt", id: model.id }, () => purpose.background, cycle);
  const engine = { ...raw, streamFn: (m: any, context: any, opts: any) => raw.streamFn(m, context, { ...opts, onPayload: async (payload: unknown) => { if (lateAutomatic && !handedLate) { handedLate = true; agent.steer(marker); } if (cut === "payload") { cut = "none"; await Promise.resolve(); revoke(); } return payload; } }) };
  const agent = createTeacherAgent(undefined, { engine, messages, chatId: "scratch-native-session", tools: withTool ? { again: { name: "again", label: "again", description: "scratch", parameters: Type.Object({}), execute: async () => { executed++; return { content: [{ type: "text" as const, text: "Done" }], details: {} }; } } } : {}, callPurpose: purpose, requestCycle: cycle, onUsage: () => usage++ });
- if (!staged && !lateAutomatic) agent.steer(marker);
+ if (!staged && !lateAutomatic && !retryEmpty) agent.steer(marker);
  if (withLearner) agent.steer(learner);
- const handle = runPiTurn({ agent, requestCycle: cycle, onFinish: (m) => { settled++; final = m; resolve(); } });
+ const handle = runPiTurn({ agent, requestCycle: cycle, retryEmptyAnswer: retryEmpty, onFinish: (m) => { settled++; final = m; resolve(); } });
  const firstView = new Response(handle.subscribe()).text();
  await finished;
  const wire = await firstView; const replay = await new Response(handle.subscribe()).text();
@@ -99,6 +104,13 @@ async function nativeRun(where: typeof cut, staged: boolean, withLearner = true,
  assert.equal(events.filter((e) => e.type === "agent_start").length, 1);
  return { cycle, agent, final, wire, events, restored, committed, usage, executed, leases: [...leases], fetches };
 }
+test("an empty ChatGPT response after an answer retries in the same foreground session", async () => {
+ const r = await nativeRun("none", false, true, false, false, false, true);
+ assert.equal(r.fetches, 2);
+ assert.deepEqual(r.leases, [false, false]);
+ assert.match(r.wire, /Accepted learner/);
+ assert.equal(r.usage, 2);
+});
 for (const where of ["lease", "payload"] as const) for (const staged of [false, true]) {
  test(`real native drain -> ${where} denial -> same Agent foreground recovery, staged=${staged}`, { timeout: 5000 }, async () => {
   const r = await nativeRun(where, staged);

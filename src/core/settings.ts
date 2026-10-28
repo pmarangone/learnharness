@@ -294,6 +294,8 @@ export interface AppearanceSettings {
 	/** Reading font size in px (12–24, default 16). Headings render as
 	 *  multiples of this, so one knob scales the document coherently. */
 	proseFontSize?: number;
+	/** Width of the lesson transcript as a percentage of the available pane. */
+	readingWidth?: number;
 	/** Session names in CMU Serif (default true — today's look). */
 	sessionNameSerif?: boolean;
 	mdRendering?: MdRenderingSettings;
@@ -391,6 +393,7 @@ export interface FactorySettings {
 		background: string | null;
 		fontFamily: string | null;
 		proseFontSize: number;
+		readingWidth: number;
 		sessionNameSerif: boolean;
 		mdRendering: {
 			headingWeight: number;
@@ -411,6 +414,7 @@ export const FACTORY_SETTINGS: FactorySettings = {
 		background: null, // the dark default (#141414) lives in the mode's derivation curve
 		fontFamily: null, // Source Sans 3
 		proseFontSize: 16,
+		readingWidth: 100,
 		sessionNameSerif: true,
 		mdRendering: { headingWeight: 900, boldColor: null, italicColor: null },
 	},
@@ -561,6 +565,9 @@ function sanitizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
 	}
 	if (typeof raw.proseFontSize === "number" && Number.isFinite(raw.proseFontSize)) {
 		out.proseFontSize = clamp(Math.round(raw.proseFontSize), PROSE_FONT_MIN, PROSE_FONT_MAX);
+	}
+	if (typeof raw.readingWidth === "number" && Number.isFinite(raw.readingWidth)) {
+		out.readingWidth = clamp(Math.round(raw.readingWidth), 40, 100);
 	}
 	const sessionNameSerif = boolOrDrop(raw.sessionNameSerif);
 	if (sessionNameSerif !== undefined) out.sessionNameSerif = sessionNameSerif;

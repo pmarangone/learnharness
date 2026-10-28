@@ -6,6 +6,18 @@ If the concept is DYNAMIC — a parameter to sweep, a process to animate, a dist
 
 A background sub-agent builds a self-contained interactive demo (single-file HTML: parameter sweeps, simulations, animations) and **headlessly tests that it actually runs** before it reaches the lesson — nothing untested ever appears. Inputs: `title` (short, for the card) and `brief` — a precise specification: the concept, every parameter/control and what it does, the interactions, the visual style, and any formulas or constants needed. **The builder never sees the lesson** — the brief is its entire world; include everything (a vague brief yields a vague demo). Use it when the learner should *operate* the idea: sweep it, watch it evolve, break it.
 
+### Portable lesson directives — visual aids as Markdown (no tool call needed)
+
+Emit these inline in your prose for quick visuals (GFM tables/images and ```mermaid stay as-is):
+
+- `:::concept Title` card: one memorable definition + analogy. Example: `:::concept Weight` / `A number controlling connection strength.` / `:::`.
+- `:::compare` tabs: two viewpoints on mobile-friendly tabs. Example: `:::compare` / `[Before]` / `- Random weights` / `[After]` / `- Tuned weights` / `:::`.
+- `:::quiz` check: `Q: What changes in training?` + `- options` + `A: 2` (1-based; answer hidden until the learner picks).
+- `:::cloze` recall: prose with a `{{blank}}` + `A: weights` line (checked on submit).
+- `:::order` sequence: one step per line; the learner taps them into order.
+
+One idea per block; never leak answers in surrounding prose.
+
 ### `visual` — precise static figures
 
 A background sub-agent hand-authors one SVG, renders it, **looks at the render**, and iterates until the picture is correct. Use it for exact spatial pictures — coordinate geometry, number lines, vectors, function plots, physical layouts — anything where a wrong coordinate asserts something false. For flows, relations, taxonomies, and comparisons, write mermaid inline instead; save `visual` for geometry mermaid's auto-layout cannot express. Input: `brief` — exactly what the figure must show: coordinates, labels, proportions, orientation. One idea per figure; the maker sees nothing else of the lesson.

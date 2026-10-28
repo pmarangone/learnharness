@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode } from "@/src/core";
-import { DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { BookmarkIcon, Trash2Icon, DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -20,6 +20,8 @@ import { cn } from "@/lib/utils";
 import { fuzzyScore } from "@/src/core";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import type { ChatListItem } from "@/src/core";
+import type { Bookmark } from "@/src/core/bookmarks";
+import { messageAnchorId } from "@/src/core/session-navigation";
 import { kbdEventForAction } from "@/src/core";
 import { notifySettingsSaved } from "@/components/settings-signal";
 
@@ -383,7 +385,7 @@ export function RenameRow({ chat, onCommit, onCancel }: { chat: ChatListItem; on
 /** The three-way kind filter (practice sessions, owner 2026-10-04):
  *  Teaching / All / Practice — a client-side filter over the same
  *  snapshot, persisted in localStorage, defaulting to All. */
-export type SessionKindFilter = "teach" | "all" | "practice";
+export type SessionKindFilter = "teach" | "all" | "practice" | "bookmarks";
 const KIND_FILTER_KEY = "lh:session-kind-filter";
 
 function SessionsSidebar() {
@@ -393,7 +395,7 @@ function SessionsSidebar() {
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
 	useEffect(() => {
 		const stored = window.localStorage.getItem(KIND_FILTER_KEY);
-		if (stored === "teach" || stored === "all" || stored === "practice") setKindFilter(stored);
+		if (stored === "teach" || stored === "all" || stored === "practice" || stored === "bookmarks") setKindFilter(stored);
 	}, []);
 	const setFilter = useCallback((f: SessionKindFilter) => {
 		setKindFilter(f);
@@ -401,6 +403,34 @@ function SessionsSidebar() {
 	}, []);
 	const pathname = usePathname();
 	const router = useRouter();
+	const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+	const refreshBookmarks = useCallback(async () => {
+		try {
+			const response = await fetch("/api/bookmarks", { cache: "no-store" });
+			if (!response.ok) return;
+			const data = await response.json() as { bookmarks: Bookmark[] };
+			setBookmarks(data.bookmarks);
+		} catch { /* Keep the previous list if the app is briefly unavailable. */ }
+	}, []);
+	useEffect(() => {
+		void refreshBookmarks();
+		window.addEventListener("lh:bookmarks-changed", refreshBookmarks);
+		return () => window.removeEventListener("lh:bookmarks-changed", refreshBookmarks);
+	}, [refreshBookmarks]);
+	const bookmarkRows = useMemo(() => bookmarks.flatMap((bookmark) => {
+		const chat = chats?.find((candidate) => candidate.id === bookmark.chatId);
+		if (!chat) return [];
+		const q = query.trim();
+		if (q && fuzzyScore(q, chat.title) === null && fuzzyScore(q, bookmark.text) === null) return [];
+		return [{ bookmark, chat }];
+	}), [bookmarks, chats, query]);
+	const openBookmark = (bookmark: Bookmark) => router.push(`/chat/${encodeURIComponent(bookmark.chatId)}#${encodeURIComponent(messageAnchorId(bookmark.messageId))}`);
+	const removeBookmark = async (id: string) => {
+		try {
+			const response = await fetch(`/api/bookmarks?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+			if (response.ok) window.dispatchEvent(new Event("lh:bookmarks-changed"));
+		} catch { /* Leave the bookmark visible if removal failed. */ }
+	};
 	const { open: openSettings } = useSettingsDialog();
 
 	/* New session (owner, 2026-09-13): NO POST — the button opens the
@@ -417,7 +447,7 @@ function SessionsSidebar() {
 	const shown = useMemo(() => {
 		const q = query.trim();
 		let list = chats;
-		if (list && kindFilter !== "all") {
+		if (list && kindFilter !== "all" && kindFilter !== "bookmarks") {
 			list = list.filter((c) => (c.kind ?? "teach") === kindFilter);
 		}
 		if (!list) return list;
@@ -632,8 +662,8 @@ function SessionsSidebar() {
 	// buttons, so the index matches).
 	useEffect(() => {
 		if (kbdIndex === null) return;
-		listRef.current?.querySelectorAll("button")[kbdIndex]?.scrollIntoView({ block: "nearest" });
-	}, [kbdIndex]);
+		listRef.current?.querySelectorAll(kindFilter === "bookmarks" ? '[data-testid="bookmark-row"]' : "button")[kbdIndex]?.scrollIntoView({ block: "nearest" });
+	}, [kbdIndex, kindFilter]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -748,7 +778,7 @@ function SessionsSidebar() {
 								}
 								// Modified keys belong to the surface (⇧↵ etc.).
 								if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-								const n = shown?.length ?? 0;
+								const n = kindFilter === "bookmarks" ? bookmarkRows.length : (shown?.length ?? 0);
 								if (n === 0) return;
 								if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 									// The rows move, not the caret.
@@ -760,10 +790,13 @@ function SessionsSidebar() {
 									return;
 								}
 								if (e.key === "Enter") {
-									const target = shown![kbdIndex !== null && kbdIndex < n ? kbdIndex : 0];
-									if (!target) return;
+									const index = kbdIndex !== null && kbdIndex < n ? kbdIndex : 0;
+									const target = shown?.[index];
+									const saved = bookmarkRows[index];
+									if (kindFilter === "bookmarks" ? !saved : !target) return;
 									e.preventDefault();
-									router.push(`/chat/${target.id}`);
+									if (kindFilter === "bookmarks" && saved) openBookmark(saved.bookmark);
+									else if (target) router.push(`/chat/${target.id}`);
 									setKbdIndex(null);
 									e.currentTarget.blur();
 								}
@@ -801,10 +834,14 @@ function SessionsSidebar() {
 							{f === "teach" ? "Teaching" : f === "all" ? "All" : "Practice"}
 						</button>
 					))}
+					<button type="button" aria-label="Bookmarked passages" title="Bookmarked passages" aria-pressed={kindFilter === "bookmarks"} data-testid="kind-filter-bookmarks" onClick={() => setFilter("bookmarks")} className={cn("rounded-sm px-2 py-1.5 transition-colors", kindFilter === "bookmarks" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}><BookmarkIcon className="size-3.5" /></button>
 				</div>
 
 				<div ref={listRef} className="flex-1 overflow-y-auto p-2">
-					{shown === null ? (
+					{kindFilter === "bookmarks" && chats !== null ? (bookmarkRows.length === 0 ? <div className="px-2 py-4 text-xs text-muted-foreground">{query.trim() ? "No bookmarks match." : "No bookmarks yet. Select lesson text to save it."}</div> : bookmarkRows.map(({ bookmark, chat }, i) => <div key={bookmark.id} className={cn("group mb-0.5 flex items-start rounded-lg hover:bg-accent", i === kbdIndex && "bg-accent/60 ring-1 ring-border")}>
+						<button type="button" data-testid="bookmark-row" onClick={() => { setKbdIndex(null); openBookmark(bookmark); }} className="min-w-0 flex-1 px-3 py-2 text-left"><span className="line-clamp-2 block font-prose text-sm">{bookmark.text}</span><span className="block truncate text-xs text-muted-foreground">{chat.title}</span></button>
+						<button type="button" aria-label="Remove bookmark" title="Remove bookmark" onClick={() => void removeBookmark(bookmark.id)} className="m-2 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"><Trash2Icon className="size-3.5" /></button>
+					</div>)) : shown === null ? (
 						<div className="px-2 py-4 text-xs text-muted-foreground">Loading…</div>
 					) : shown.length === 0 ? (
 						<div className="px-2 py-4 text-xs text-muted-foreground">

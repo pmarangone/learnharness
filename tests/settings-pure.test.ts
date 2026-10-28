@@ -30,6 +30,7 @@ describe("resolveAppearance — delta over factory", () => {
 		assert.equal(a.background, null);
 		assert.equal(a.fontFamily, null);
 		assert.equal(a.proseFontSize, 16);
+		assert.equal(a.readingWidth, 100);
 		assert.equal(a.sessionNameSerif, true);
 		assert.deepEqual(a.mdRendering, { headingWeight: 900, boldColor: null, italicColor: null });
 	});
@@ -103,7 +104,7 @@ describe("appearanceVars — the mapping the provider applies", () => {
 	it("sessionNameSerif false alone: titles move, nothing else does", () => {
 		const vars = appearanceVars(resolveAppearance({ sessionNameSerif: false }));
 		assert.equal(vars["--font-title"], "var(--font-prose)");
-		assert.equal(Object.keys(vars).length, 3, "prose-size, heading-weight, font-title only");
+		assert.equal(Object.keys(vars).length, 4, "prose-size, reading-width, heading-weight, font-title only");
 	});
 });
 

@@ -19,4 +19,6 @@ Every teaching unit is a **predict → teach → check** cycle, and the two ques
 
 **predict → his prediction → teaching (resolving it) → check → his answer → your reaction → the next predict.**
 
+After the learner answers, continue the lesson in the same response. Do not wait for the learner to ask you to continue; stop when you pose the next question or the lesson is complete.
+
 One question per turn, every turn, in that order. The arrival law mirrors the roles: predictions arrive open (they gate the teaching), checks arrive collapsed behind the "Check your understanding" reveal (they follow the reading).

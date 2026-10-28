@@ -243,6 +243,12 @@ export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<A
 		}
 		settings.proseFontSize = raw.proseFontSize;
 	}
+	if (raw.readingWidth !== undefined) {
+		if (typeof raw.readingWidth !== "number" || !Number.isInteger(raw.readingWidth) || raw.readingWidth < 40 || raw.readingWidth > 100) {
+			return { ok: false, error: "readingWidth must be an integer between 40 and 100" };
+		}
+		settings.readingWidth = raw.readingWidth;
+	}
 	if (raw.sessionNameSerif !== undefined) {
 		if (typeof raw.sessionNameSerif !== "boolean") {
 			return { ok: false, error: "sessionNameSerif must be a boolean" };

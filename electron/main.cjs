@@ -715,7 +715,7 @@ async function main() {
 	// banner channel is live from first paint; the first check and the 24h
 	// interval fire after it below. setupAutoUpdater's contract: failures
 	// are log lines — this can never block boot.
-	setupAutoUpdater();
+	reportUpdateStatus("disabled");
 	ipcMain.on("lh:update-install", () => installUpdateNow());
 	ipcMain.handle("lh:update:get", (event) => {
 		if (!trustedAppWindows.has(BrowserWindow.fromWebContents(event.sender)) || !trustedSender(event, new URL(url).origin, BrowserWindow)) throw new Error("Untrusted desktop request.");

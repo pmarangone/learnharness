@@ -1,6 +1,7 @@
 import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { ToolCallIdUniquifier } from "./call-ids.ts";
 import type { ChatGPTRequestCycle } from "../../agent/chatgpt-request-cycle.ts";
+import { newAnswerContinuationMessage } from "../../core/native-messages.ts";
 
 /**
  * THE NATIVE WIRE (Wave D, owner-approved 2026-09-26): one agent turn, streamed
@@ -71,6 +72,7 @@ export type TurnWireEvent =
 
 export interface PiTurnSpec {
 	requestCycle?: ChatGPTRequestCycle;
+	retryEmptyAnswer?: boolean;
 	/** The per-turn agent (stateless engine — built from the record). */
 	agent: Agent;
 	/** The handler's error-masking policy for LOOP-level failures (the
@@ -121,12 +123,15 @@ export interface PiTurnHandle {
 }
 
 export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
-	const { agent, onError, onFinish, onSettleError, onSettleFailure, usedToolCallIds, updateFlushMs = 100, requestCycle } = spec;
+	const { agent, onError, onFinish, onSettleError, onSettleFailure, usedToolCallIds, updateFlushMs = 100, requestCycle, retryEmptyAnswer = false } = spec;
 	const uniquifier = usedToolCallIds ? new ToolCallIdUniquifier(usedToolCallIds) : undefined;
 
 	let settled = false;
 	let sawAbort = false;
 	let reportedErrorText: string | undefined;
+	let emptyAnswerResponse = false;
+	let producedAnswerContent = false;
+	let retriedEmptyAnswer = false;
 
 	// THE PER-TURN STATE LOG (memory-only — the settle-only disk writes
 	// are unchanged). COMPACTION LAW (owner, 2026-10-09, supersedes the
@@ -251,8 +256,13 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 				: uniqued;
 		send(wire);
 		if (event.type === "message_end") {
-			const m = event.message as { role?: string; stopReason?: string } | undefined;
+			const m = event.message as { role?: string; stopReason?: string; content?: Array<{ type: string; text?: string }> } | undefined;
 			if (m?.role === "assistant" && m.stopReason === "aborted") sawAbort = true;
+			if (retryEmptyAnswer && m?.role === "assistant") {
+				const visible = m.content?.some((part) => part.type === "toolCall" || (part.type === "text" && !!part.text?.trim())) ?? false;
+				producedAnswerContent ||= visible;
+				emptyAnswerResponse = m.stopReason === "stop" && !visible;
+			}
 		}
 		if (event.type === "agent_end") {
 			// Persist/report before the terminal closes every view to new frames.
@@ -273,6 +283,15 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 				const denied = requestCycle.deniedBeforeDispatch;
 				const outcome = requestCycle.finishNativeCycle();
 				if (denied) agent.state.messages = outcome.messages;
+				if (!denied && outcome.action === "settle" && retryEmptyAnswer && emptyAnswerResponse && !producedAnswerContent && !sawAbort && !retriedEmptyAnswer) {
+					retriedEmptyAnswer = true;
+					emptyAnswerResponse = false;
+					agent.state.messages = [...agent.state.messages, newAnswerContinuationMessage()];
+					continue;
+				}
+				if (!denied && retriedEmptyAnswer && emptyAnswerResponse && !producedAnswerContent && !sawAbort) {
+					send({ type: "error", errorText: "The model returned an empty response. Please try again." });
+				}
 				if (outcome.action !== "resumeForeground") {
 					handle({ type: "agent_end", messages: [...agent.state.messages] });
 					break;

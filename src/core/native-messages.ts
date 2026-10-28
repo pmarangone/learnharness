@@ -68,6 +68,7 @@ export interface LhMarkerMessage {
 	customType:
 		| "graph-context"
 		| "probe-handoff"
+		| "answer-continuation"
 		| "subagent-steer"
 		| "subagent-abort"
 		| "plan-block"
@@ -211,6 +212,18 @@ export function newHandoffMessage(chatId: string): LhMarkerMessage {
 		content: HANDOFF_TEXT,
 		display: true,
 		details: { chatId },
+		timestamp: Date.now(),
+	};
+}
+
+export function newAnswerContinuationMessage(): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "answer-continuation",
+		content: "Continue the lesson based on the learner's answer. Do not wait for a request to continue.",
+		display: false,
+		details: null,
 		timestamp: Date.now(),
 	};
 }
@@ -755,7 +768,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
 		if (["practice-thinking", "practice-next"].includes(message.customType)) return "learner";
-		return ["graph-context", "plan-block", "problem-dismissed", "compaction"].includes(message.customType) ? "neutral" : "unrecognizable";
+		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "answer-continuation"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {
 		if (!(QUESTION_TOOLS as readonly string[]).includes(message.toolName) || message.isError || message.details == null || (message.details as { dismissed?: boolean }).dismissed) return "neutral";

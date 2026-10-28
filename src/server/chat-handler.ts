@@ -522,6 +522,7 @@ export async function handleChatInput(
 		const handle = runPiTurn({
 			agent: constructed,
 			requestCycle,
+			retryEmptyAnswer: input.type === "answer" && conversation.provider === "chatgpt" && record.kind !== "practice",
 			// The coalescing window seam (COMPACTION LAW, 2026-10-09): tests
 			// tighten it via LH_UPDATE_FLUSH_MS; production rides the 100ms
 			// default in ui-stream.

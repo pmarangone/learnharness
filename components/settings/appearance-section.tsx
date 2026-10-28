@@ -97,8 +97,32 @@ export function AppearanceSection({
 	/** PUT the whole appearance section; the page re-applies on success. */
 	onSectionChange: (next: AppearanceSettings) => void;
 }) {
-	const { appearance: resolved } = useAppearance();
+	const { appearance: resolved, onAppearanceChange } = useAppearance();
 	const md = appearance?.mdRendering;
+	const [readingWidth, setReadingWidth] = useState(resolved.readingWidth);
+	const savedWidth = useRef(resolved.readingWidth);
+	const widthTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const pendingWidth = useRef<number | null>(null);
+	const latestWidthSettings = useRef({ appearance, onSectionChange });
+	latestWidthSettings.current = { appearance, onSectionChange };
+	useEffect(() => {
+		setReadingWidth(resolved.readingWidth);
+		savedWidth.current = resolved.readingWidth;
+	}, [appearance?.readingWidth]);
+	const saveReadingWidth = (value: number) => {
+		if (widthTimer.current) clearTimeout(widthTimer.current);
+		widthTimer.current = null;
+		pendingWidth.current = null;
+		if (savedWidth.current === value) return;
+		savedWidth.current = value;
+		latestWidthSettings.current.onSectionChange({ ...latestWidthSettings.current.appearance, readingWidth: value });
+	};
+	useEffect(() => () => {
+		if (widthTimer.current) clearTimeout(widthTimer.current);
+		if (pendingWidth.current !== null && pendingWidth.current !== savedWidth.current) {
+			latestWidthSettings.current.onSectionChange({ ...latestWidthSettings.current.appearance, readingWidth: pendingWidth.current });
+		}
+	}, []);
 
 	// The font dropdown's open state + its enumeration cache. undefined =
 	// not enumerated yet (desktop: click-bound queryLocalFonts pending);
@@ -259,6 +283,27 @@ export function AppearanceSection({
 						</MenuShell>
 					)}
 				</span>
+			</SettingsRow>
+			<SettingsRow label="Lesson text width" hint="Narrower text is easier to read on wide screens" testid="row-reading-width">
+				<div className="flex items-center gap-3">
+					<input
+						type="range" min={40} max={100} step={5} value={readingWidth}
+						aria-label="Lesson text width" aria-valuetext={`${readingWidth}%`}
+						data-testid="reading-width-slider"
+						className="w-32 cursor-pointer accent-primary"
+						onChange={(event) => {
+							const value = Number(event.currentTarget.value);
+							setReadingWidth(value);
+							onAppearanceChange({ ...appearance, readingWidth: value });
+							pendingWidth.current = value;
+							if (widthTimer.current) clearTimeout(widthTimer.current);
+							widthTimer.current = setTimeout(() => saveReadingWidth(value), 350);
+						}}
+						onPointerUp={(event) => saveReadingWidth(Number(event.currentTarget.value))}
+						onBlur={(event) => saveReadingWidth(Number(event.currentTarget.value))}
+					/>
+					<output className="w-10 text-right font-ui text-xs tabular-nums text-muted-foreground">{readingWidth}%</output>
+				</div>
 			</SettingsRow>
 			<SettingsRow label="Reading font size" hint={`${resolved.proseFontSize}px`} testid="row-prose-size">
 				<CommitInput

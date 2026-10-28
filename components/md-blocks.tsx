@@ -38,6 +38,7 @@ import {
 } from "streamdown";
 import type { ExtraProps } from "streamdown";
 import { MERMAID_FONT_SIZE, renderMermaid } from "@/components/mermaid-render";
+import { CompareTabs, ClozeBlock, ConceptCard, OrderBlock, QuizBlock, parseCloze, parseCompare, parseConcept, parseOrder, parseQuiz, parseWonderHeader } from "@/components/wondering";
 import { MermaidError } from "@/components/mermaid-error";
 import { blurAfterPointerClick } from "@/components/focus-hygiene";
 import { chartSize, useSessionMermaid } from "@/components/session-overlay";
@@ -251,6 +252,21 @@ export function MarkdownCode(props: ComponentProps<"code"> & ExtraProps) {
 	const source = codeSource(children);
 
 	if (language === "mermaid") return <MermaidInline chart={source} />;
+
+	// Wondering Phase 1 directives (portable ::: blocks rewritten to fences
+	// upstream; direct ```wonder-* fences also render). Static-safe: default
+	// states show the task, never the answer.
+	const wonder = parseWonderHeader(meta ? `${language} ${meta}` : language);
+	if (wonder) {
+		if (wonder.kind === "concept") {
+			const data = parseConcept(wonder.title, source);
+			return <ConceptCard title={data.title} body={data.body} />;
+		}
+		if (wonder.kind === "compare") return <CompareTabs panels={parseCompare(source)} />;
+		if (wonder.kind === "quiz") return <QuizBlock data={parseQuiz(source)} />;
+		if (wonder.kind === "cloze") return <ClozeBlock data={parseCloze(source)} />;
+		if (wonder.kind === "order") return <OrderBlock steps={parseOrder(source)} />;
+	}
 
 	const startMatch = /startLine=(\d+)/.exec(meta);
 	const startLine = startMatch ? Number.parseInt(startMatch[1]!, 10) : undefined;

@@ -34,6 +34,7 @@ import {
   type PluginConfig,
 } from "streamdown";
 import { mdComponents } from "@/components/md-blocks";
+import { transformWondering } from "@/components/wondering";
 import { repairMathForDisplay, transformMathDelimiters } from "@/src/core";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
@@ -362,7 +363,7 @@ export const MessageResponse = memo(
     // legacy spans are left for a later render when their closer arrives.
     const content =
       typeof children === "string"
-        ? transformMathDelimiters(children)
+        ? transformMathDelimiters(transformWondering(children))
         : children;
 
     return (
