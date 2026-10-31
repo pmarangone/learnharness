@@ -6,6 +6,17 @@
  */
 export const OPENING_PROMPT_FAILURE = "Couldn’t open the session. Your message is still here. Try sending again.";
 
+/**
+ * NODE EXTEND (owner): the composer's seed when a graph node is extended
+ * into a new session — "name: statement". A typed draft always wins: it
+ * returns untouched, so extending never clobbers the learner's words.
+ * Exported for tests.
+ */
+export function nodeExtendPrefill(draft: string, node: { name: string; statement: string }): string {
+	if (draft.trim() !== "") return draft;
+	return `${node.name}: ${node.statement}`;
+}
+
 export interface OpeningPrompt {
 	text: string;
 	/** Written BEFORE sending. A later mount restores a draft, never reposts. */

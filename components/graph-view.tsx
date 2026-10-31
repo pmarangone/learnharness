@@ -66,7 +66,7 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { NotesImportErrors, useNotesImport } from "@/components/notes-import.tsx";
 import Link from "next/link";
-import { FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, UploadIcon, WaypointsIcon } from "lucide-react";
+import { CornerDownLeftIcon, FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, UploadIcon, WaypointsIcon } from "lucide-react";
 import { incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
 import { planCostLabel } from "@/components/usage-format";
 import { GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
@@ -133,6 +133,85 @@ export function isNodeVisible(node: Pick<GraphNode, "name" | "statement">, query
 	const q = query.trim().toLowerCase();
 	if (!q) return true;
 	return node.name.toLowerCase().includes(q) || node.statement.toLowerCase().includes(q);
+}
+
+/** One provenance row for the node detail card: a session deep-link
+ *  (href) or an imported-notes file (no href — static text, no session
+ *  to open). Resolved by the view from the snapshot; the body only
+ *  renders. */
+export interface NodeCardSource {
+	id: string;
+	label: string;
+	href?: string;
+}
+
+/** Add-if-absent pick merge for the extend flow (id-keyed — a node
+ *  already picked returns the SAME array, so the setState identity
+ *  bailout holds and the chip count never double-counts).
+ *  Exported for tests. */
+export function mergeNodePick<T extends { id: string }>(picks: T[], node: T): T[] {
+	if (picks.some((p) => p.id === node.id)) return picks;
+	return [...picks, node];
+}
+
+/** The node detail card's body (name + statement + the extend action +
+ *  provenance) — the positioning shell stays with the view; this is the
+ *  testable content. The extend button renders only when onExtend is
+ *  provided (card-only entry, owner): clicking it reports the node and
+ *  leaves navigation to the caller. */
+export function NodeDetailCardBody({
+	node,
+	sources,
+	onExtend,
+}: {
+	node: Pick<GraphNode, "id" | "name" | "statement">;
+	sources: readonly NodeCardSource[];
+	onExtend?: (node: { id: string; name: string; statement: string }) => void;
+}) {
+	return (
+		<>
+			<div className="text-sm font-medium leading-snug">{node.name}</div>
+			<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{node.statement}</div>
+			{onExtend && (
+				<button
+					type="button"
+					data-testid="node-extend-session"
+					onClick={() => onExtend({ id: node.id, name: node.name, statement: node.statement })}
+					className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border/60 px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+				>
+					<CornerDownLeftIcon className="size-3.5" />
+					Extend in new session
+				</button>
+			)}
+			{sources.length > 0 ? (
+				<div className="mt-3 flex flex-col gap-1">
+					<div className="text-xs text-muted-foreground">Sessions</div>
+					{sources.map((source) =>
+						source.href !== undefined ? (
+							<div key={source.id} className="flex items-center gap-1.5">
+								<Link
+									href={source.href}
+									scroll={false}
+									className="min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
+								>
+									{source.label}
+								</Link>
+							</div>
+						) : (
+							<div key={source.id} className="flex items-center gap-1.5">
+								<FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
+								<span className="min-w-0 flex-1 truncate px-2 py-1.5 text-sm text-muted-foreground">
+									{source.label}
+								</span>
+							</div>
+						),
+					)}
+				</div>
+			) : (
+				<div className="mt-3 text-xs text-muted-foreground">No sessions recorded.</div>
+			)}
+		</>
+	);
 }
 
 /** In-place sessions patch for a live rename (rename-shuffle fix,
@@ -963,6 +1042,7 @@ export function GraphView({
 	practiceSelection,
 	onPracticeSelectionChange,
 	onChainSelectClose,
+	onExtendNode,
 }: {
 	/** PRACTICE SELECT (owner vision, 2026-10-04): the LIFTED, persistent
 	 *  pick set — every check/clear in the chain table (however opened)
@@ -973,6 +1053,10 @@ export function GraphView({
 	practiceSelection?: ReadonlySet<string>;
 	onPracticeSelectionChange?: (nodes: { id: string; name: string; statement: string }[]) => void;
 	onChainSelectClose?: () => void;
+	/** NODE EXTEND (owner): the detail card's "Extend in new session"
+	 *  reports the clicked node — the caller seeds its composer (pick +
+	 *  prefill) and the send rides the graphContext creation seam. */
+	onExtendNode?: (node: { id: string; name: string; statement: string }) => void;
 }) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1648,41 +1732,31 @@ export function GraphView({
 					// over home.tsx's drag surface (2026-09-17).
 					className="lh-no-drag absolute z-10 w-80 max-w-[calc(100%-1rem)] rounded-xl border bg-card p-4 text-left shadow-lg"
 				>
-					<div className="text-sm font-medium leading-snug">{selected.node.name}</div>
-					<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{selected.node.statement}</div>
-					{selected.sourceIds.length > 0 ? (
-						<div className="mt-3 flex flex-col gap-1">
-							<div className="text-xs text-muted-foreground">Sessions</div>
-							{selected.sourceIds.map((sourceId) => {
-								// An imported-notes file: a STATIC entry — the path,
-								// plain text, never a link (no session to open).
-								if (snapshot?.fileSources?.[sourceId] !== undefined) {
-									return (
-										<div key={sourceId} className="flex items-center gap-1.5">
-											<FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
-											<span className="min-w-0 flex-1 truncate px-2 py-1.5 text-sm text-muted-foreground">
-												{snapshot.fileSources[sourceId]}
-											</span>
-										</div>
-									);
-								}
-								// A real session: deep-linkable provenance.
-								return (
-									<div key={sourceId} className="flex items-center gap-1.5">
-										<Link
-											href={propositionSessionHref(selected.node, sourceId)}
-											scroll={false}
-											className="min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
-										>
-											{snapshot?.sessions[sourceId] ?? sourceId}
-										</Link>
-									</div>
-								);
-							})}
-						</div>
-					) : (
-						<div className="mt-3 text-xs text-muted-foreground">No sessions recorded.</div>
-					)}
+					<NodeDetailCardBody
+						node={selected.node}
+						sources={selected.sourceIds.map((sourceId) =>
+							// An imported-notes file: a STATIC entry — the path,
+							// plain text, never a link (no session to open).
+							snapshot?.fileSources?.[sourceId] !== undefined
+								? { id: sourceId, label: snapshot.fileSources[sourceId] ?? sourceId }
+								: // A real session: deep-linkable provenance.
+									{
+										id: sourceId,
+										label: snapshot?.sessions[sourceId] ?? sourceId,
+										href: propositionSessionHref(selected.node, sourceId),
+									},
+						)}
+						// Extending consumes the card — it closes over the
+						// composer the caller just seeded.
+						onExtend={
+							onExtendNode
+								? (node) => {
+										onExtendNode(node);
+										setSelected(null);
+									}
+								: undefined
+						}
+					/>
 				</div>
 			)}
 			{/* The chain table overlay (chains-overlay plan, 2026-09-29):

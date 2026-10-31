@@ -12,7 +12,8 @@ import { DictationBar, joinDictation, useDictation } from "@/components/dictatio
 import { useFieldCycle } from "@/components/field-cycle";
 import { SidebarToggle } from "@/components/sidebar";
 import { StatsBar } from "@/components/stats-bar";
-import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
+import { OPENING_PROMPT_FAILURE, nodeExtendPrefill } from "@/components/opening-prompt";
+import { mergeNodePick } from "@/components/graph-view";
 import { SessionStarter } from "@/components/start-session";
 import type { TurnUsage } from "@/src/core";
 
@@ -93,6 +94,21 @@ export function Home({
 	const [mode, setMode] = useState<"teach" | "practice">("teach");
 	const [practiceProps, setPracticeProps] = useState<{ id: string; name: string; statement: string }[]>([]);
 	const [chainSelectOpen, setChainSelectOpen] = useState(false);
+	/* NODE EXTEND (owner): the detail card's entry — the node joins the
+	 * pick set (add-if-absent, existing picks kept) and the composer
+	 * prefills with "name: statement" only when the draft is empty (a
+	 * typed draft is never touched). Focus lands in the composer so the
+	 * learner can edit before sending. Mode is deliberately untouched:
+	 * the teach/practice switch at send time governs the new session. */
+	const extendNode = useCallback((node: { id: string; name: string; statement: string }) => {
+		setPracticeProps((prev) => mergeNodePick(prev, node));
+		const next = nodeExtendPrefill(topicRef.current, node);
+		if (next !== topicRef.current) {
+			topicRef.current = next;
+			setTopic(next);
+		}
+		topicInputRef.current?.focus();
+	}, []);
 	// The chain table is CONTROLLED off this id set (the lifted pick).
 	const pickedIds = useMemo(() => new Set(practiceProps.map((p) => p.id)), [practiceProps]);
 
@@ -182,6 +198,7 @@ export function Home({
 						practiceSelection={pickedIds}
 						onPracticeSelectionChange={setPracticeProps}
 						onChainSelectClose={() => setChainSelectOpen(false)}
+						onExtendNode={extendNode}
 					/>
 				) : (
 					<MinimalHome
