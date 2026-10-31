@@ -112,6 +112,14 @@ export const GRAPH_FORMAT_FILE = path.join(PATHS.graph, "format.json");
 export const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
 
 /**
+ * LOCAL BUILD VERSION (owner): data/local-version.json — the frozen base
+ * for the settings row's y.base_version display. Written once on first
+ * read ({baseCommit, baseVersion}); user data, so repo edits never move
+ * it. NOT a ledger: a single small JSON record, read-modify-write.
+ */
+export const LOCAL_VERSION_FILE = path.join(DATA_ROOT, "local-version.json");
+
+/**
  * User prompt-override files (settings-storage wave, 2026-09-19): the
  * per-segment system-prompt overrides mirroring the SOURCE layout
  * (src/agent/prompts/) — the shared base as prompts/system-prompt.md,

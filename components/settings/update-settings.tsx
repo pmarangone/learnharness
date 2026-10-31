@@ -71,11 +71,33 @@ export function UpdateSettings({
 	const { state, failed } = useUpdateState();
 	const [checkFailed, setCheckFailed] = useState(false);
 	useEffect(() => setCheckFailed(false), [state]);
+	// LOCAL BUILD VERSION (owner): y.base_version from /api/version —
+	// commits since the frozen base (+ for uncommitted edits). Resolves
+	// after mount; the prop (LH_VERSION) holds the row until then, and
+	// stays the truth if the fetch ever fails.
+	const [local, setLocal] = useState<{ y: number; base: string; dirty: boolean; display: string } | null>(null);
+	useEffect(() => {
+		fetch("/api/version")
+			.then((res) => (res.ok ? (res.json() as Promise<unknown>) : null))
+			.then((raw) => {
+				const v = raw as { y?: unknown; base?: unknown; dirty?: unknown; display?: unknown } | null;
+				if (v && typeof v.display === "string" && typeof v.base === "string"
+					&& typeof v.y === "number" && typeof v.dirty === "boolean")
+					setLocal({ y: v.y, base: v.base, dirty: v.dirty, display: v.display });
+			})
+			.catch(() => {});
+	}, []);
+	const rowVersion = local?.display ?? version;
+	// A local build (y > 0 or dirty) names no upstream release — its
+	// notes link would 404 — so only a pristine tree keeps the link,
+	// retargeted at the frozen base it still is.
+	const releaseNotes = local
+		? local.y === 0 && !local.dirty && homepage ? `${homepage}/releases/tag/v${local.base}` : null
+		: version && homepage ? `${homepage}/releases/tag/v${version}` : null;
 	const active = state !== null && state.status !== "disabled";
 	const busy = state?.status === "checking" || state?.status === "downloading";
 	const status = state?.status === "downloaded" ? updateStatusText(state)
 		: failed || checkFailed ? UPDATE_ERROR : updateStatusText(state);
-	const releaseNotes = version && homepage ? `${homepage}/releases/tag/v${version}` : null;
 	const check = () => {
 		setCheckFailed(false);
 		void window.lh?.checkForUpdates?.().catch(() => setCheckFailed(true));
@@ -84,7 +106,7 @@ export function UpdateSettings({
 	return (
 		<>
 			<SettingsRow
-				label={`Version ${version || "unknown"}`}
+				label={`Version ${rowVersion || "unknown"}`}
 				testid="row-version"
 				hint={
 					<>
